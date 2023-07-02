@@ -5,7 +5,7 @@
 #include "device_launch_parameters.h"
 
 // *** difinitions ***
-#define MAX_WORDS 6000000 // file size 
+#define MAX_WORDS 6000000 // number of reading words
 #define MAX_KEYS 32
 
 // *** file address ***
@@ -13,6 +13,7 @@ static const char FILE_KEYWORDS[] = "../data/keywords.txt";
 static const char FILE_DATASET[] =  "../data/large.txt";
 
 // *** app required functions ***
+// returns lengthof an string
 int str_length(char str[]) {
     // initializing count variable (stores the length of the string)
     int count; 
@@ -21,6 +22,7 @@ int str_length(char str[]) {
     // returning the character count of the string
     return count; 
 }
+// reads words from a text file 
 void read_word_by_word (FILE *f, char **text, unsigned int len) {
     char word[1024];
     unsigned int i, t_idx = 0;
@@ -43,8 +45,17 @@ void read_word_by_word (FILE *f, char **text, unsigned int len) {
             break;
     }
 }
+// prints results
+void printResult(char** k_words, unsigned int *matches, unsigned int len) {
+    for (int i = 0; i < len; i++) {
+        if (k_words[i][0] == ' ') { continue; }
+        printf("%c%c%c%c:%d\n", k_words[i][0], k_words[i][1], k_words[i][2], k_words[i][3], matches[i]);
+    }
+    printf("\n\n\n");
+}
 
 // *** cpu functions ***
+// this function is calculating word frequency in a serial algorithm using CPU
 void findFreqWithCPU(
     char **text, 
     unsigned int length,    // length of text
@@ -76,7 +87,8 @@ cudaError_t findFreqWithGPU(
     unsigned int k_num,     // number of key words
     unsigned int *matches
     );
-// kernel function
+// kernel function:
+// this function is calculating word frequency in a parallel algorithm using GPU
 __global__ void kernel( 
     char *text, 
     unsigned int length,     // length of text
@@ -106,17 +118,7 @@ __global__ void kernel(
 	}
 }
 
-
-void printResult(char** k_words, unsigned int *matches, unsigned int len) {
-    for (int i = 0; i < len; i++) {
-        if (k_words[i][0] == ' ') { continue; }
-        printf("%c%c%c%c:%d\n", k_words[i][0], k_words[i][1], k_words[i][2], k_words[i][3], matches[i]);
-    }
-    printf("\n\n\n");
-}
-
-
-
+// *** Main ***
 int main()
 {
 
@@ -160,6 +162,7 @@ int main()
     // *** GPU execution
     char* text_1d = (char*)calloc(MAX_WORDS*5, sizeof(char));
     char* k_words_1d = (char*)calloc(MAX_KEYS*5, sizeof(char));
+    // creating 1d arrays for GPU
     for (int i = 0; i < MAX_WORDS * 5; i = i + 5)
     {
         text_1d[i] = text[i / 5][0];
@@ -168,7 +171,6 @@ int main()
         text_1d[i + 3] = text[i / 5][3];
         text_1d[i + 4] = text[i / 5][4];
     }
-
     for (int i = 0; i < MAX_KEYS * 5; i = i + 5)
     {
         k_words_1d[i] = k_words[i / 5][0];
@@ -177,12 +179,12 @@ int main()
         k_words_1d[i + 3] = k_words[i / 5][3];
         k_words_1d[i + 4] = k_words[i / 5][4];
     }
-
+    // reset matches result
     for (int i = 0; i < MAX_KEYS; i++)
     {
         matches[i] = 0;
     }
-
+    // calling kernel
     cudaError_t cudaStatus = findFreqWithGPU(text_1d, MAX_WORDS, k_words_1d, MAX_KEYS, matches);
     if (cudaStatus != cudaSuccess) {
         fprintf(stderr, "addWithCuda failed!");
@@ -197,55 +199,51 @@ int main()
         return 1;
     }
 
-
     return 0;
 }
 
 
- // Helper function for using CUDA to add vectors in parallel.
- cudaError_t findFreqWithGPU(
- char *text, 
- unsigned int length,    // length of text
- char *k_words,
- unsigned int k_num,     // number of key words
- unsigned int *matches
- )
- {
+// Helper function for using CUDA to calculate word frequency in parallel.
+cudaError_t findFreqWithGPU(
+char *text, 
+unsigned int length,    // length of text
+char *k_words,
+unsigned int k_num,     // number of key words
+unsigned int *matches
+)
+{
+    char *dev_text;
+    char *dev_k_words;
+    unsigned int *dev_matches = 0;
+    cudaError_t cudaStatus;
 
-     char *dev_text;
-     char *dev_k_words;
-     unsigned int *dev_matches = 0;
-     cudaError_t cudaStatus;
+    // Choose which GPU to run on, change this on a multi-GPU system.
+    cudaStatus = cudaSetDevice(0);
+    if (cudaStatus != cudaSuccess) {
+        fprintf(stderr, "cudaSetDevice failed!  Do you have a CUDA-capable GPU installed?");
+        goto Error;
+    }
+    
+    // Allocate memory for text list.
+    cudaStatus = cudaMalloc((void**)&dev_text,5 * MAX_WORDS * sizeof(char));
+    if (cudaStatus != cudaSuccess) {
+        fprintf(stderr, "cudaMalloc failed!");
+        goto Error;
+    }
 
-     // Choose which GPU to run on, change this on a multi-GPU system.
-     cudaStatus = cudaSetDevice(0);
-     if (cudaStatus != cudaSuccess) {
-         fprintf(stderr, "cudaSetDevice failed!  Do you have a CUDA-capable GPU installed?");
-         goto Error;
-     }
-      
+    // Allocate memory for key word list.
+    cudaStatus = cudaMalloc((void**)&dev_k_words, 5 * MAX_KEYS * sizeof(char));
+    if (cudaStatus != cudaSuccess) {
+        fprintf(stderr, "cudaMalloc failed!");
+        goto Error;
+    }
 
-     // Allocate memory for text list.
-     cudaStatus = cudaMalloc((void**)&dev_text,5 * MAX_WORDS * sizeof(char));
-     if (cudaStatus != cudaSuccess) {
-         fprintf(stderr, "cudaMalloc failed!");
-         goto Error;
-     }
-
-
-     // Allocate memory for key word list.
-     cudaStatus = cudaMalloc((void**)&dev_k_words, 5 * MAX_KEYS * sizeof(char));
-     if (cudaStatus != cudaSuccess) {
-         fprintf(stderr, "cudaMalloc failed!");
-         goto Error;
-     }
-
-     // allocate memory for matches
-     cudaStatus = cudaMalloc((void**)&dev_matches, MAX_KEYS * sizeof(unsigned int));
-     if (cudaStatus != cudaSuccess) {
-         fprintf(stderr, "cudaMalloc failed!");
-         goto Error;
-     }
+    // allocate memory for matches
+    cudaStatus = cudaMalloc((void**)&dev_matches, MAX_KEYS * sizeof(unsigned int));
+    if (cudaStatus != cudaSuccess) {
+        fprintf(stderr, "cudaMalloc failed!");
+        goto Error;
+    }
 
     // cp data to gpu
     cudaStatus = cudaMemcpy(dev_text, text, 5 * MAX_WORDS * sizeof(char), cudaMemcpyHostToDevice);
@@ -264,53 +262,53 @@ int main()
         goto Error;
     }
 
-
-     dim3 DimGrid(25, 1, 1);
-     dim3 DimBlock(128, 1, 1);
-     int chunck_size = MAX_WORDS / 3200; // 1875
+    // defining kernel dim
+    dim3 DimGrid(25, 1, 1);
+    dim3 DimBlock(128, 1, 1);
+    int chunck_size = MAX_WORDS / 3200; // 1875
      
-     const clock_t begin_time = clock();
+    const clock_t begin_time = clock();
 
-     // Launch a kernel on the GPU with one thread for each element.
-     kernel<<<DimGrid, DimBlock>>>(
-         dev_text,
-         length*5,    // length of text
-         dev_k_words,
-         k_num*5,     // number of key words
-         dev_matches,
-         chunck_size
-         );
+    // Launch a kernel on the GPU with one thread for each element.
+    kernel<<<DimGrid, DimBlock>>>(
+        dev_text,
+        length*5,    // length of text
+        dev_k_words,
+        k_num*5,     // number of key words
+        dev_matches,
+        chunck_size
+        );
 
-     // Check for any errors launching the kernel
-     cudaStatus = cudaGetLastError();
-     if (cudaStatus != cudaSuccess) {
-         fprintf(stderr, "addKernel launch failed: %s\n", cudaGetErrorString(cudaStatus));
-         goto Error;
-     }
-    
-     // cudaDeviceSynchronize waits for the kernel to finish, and returns
-     // any errors encountered during the launch.
-     cudaStatus = cudaDeviceSynchronize();
-     if (cudaStatus != cudaSuccess) {
-         fprintf(stderr, "cudaDeviceSynchronize returned error code %d after launching addKernel!\n", cudaStatus);
-         goto Error;
-     }
+    // Check for any errors launching the kernel
+    cudaStatus = cudaGetLastError();
+    if (cudaStatus != cudaSuccess) {
+        fprintf(stderr, "addKernel launch failed: %s\n", cudaGetErrorString(cudaStatus));
+        goto Error;
+    }
 
-     float runTime = (float)( clock() - begin_time ) /  CLOCKS_PER_SEC;
-     printf("GPU runtime: %fs\n", runTime);
+    // cudaDeviceSynchronize waits for the kernel to finish, and returns
+    // any errors encountered during the launch.
+    cudaStatus = cudaDeviceSynchronize();
+    if (cudaStatus != cudaSuccess) {
+        fprintf(stderr, "cudaDeviceSynchronize returned error code %d after launching addKernel!\n", cudaStatus);
+        goto Error;
+    }
 
-     // Copy output vector from GPU buffer to host memory.
-     cudaStatus = cudaMemcpy(matches, dev_matches, MAX_KEYS * sizeof(unsigned int), cudaMemcpyDeviceToHost);
-     if (cudaStatus != cudaSuccess) {
-         fprintf(stderr, "cudaMemcpy failed!");
-         goto Error;
-     }
+    float runTime = (float)( clock() - begin_time ) /  CLOCKS_PER_SEC;
+    printf("GPU runtime: %fs\n", runTime);
 
- Error:
-     cudaFree(dev_text);
-     cudaFree(dev_k_words);
-     cudaFree(dev_matches);
-    
-     return cudaStatus;
- }
+    // Copy output vector from GPU buffer to host memory.
+    cudaStatus = cudaMemcpy(matches, dev_matches, MAX_KEYS * sizeof(unsigned int), cudaMemcpyDeviceToHost);
+    if (cudaStatus != cudaSuccess) {
+        fprintf(stderr, "cudaMemcpy failed!");
+        goto Error;
+    }
+
+    Error:
+    cudaFree(dev_text);
+    cudaFree(dev_k_words);
+    cudaFree(dev_matches);
+
+    return cudaStatus;
+}
 
